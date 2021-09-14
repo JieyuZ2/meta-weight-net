@@ -1,20 +1,18 @@
-from PIL import Image
 import os
 import os.path
-import errno
-import numpy as np
-import sys
 import pickle
+import sys
 
-
-import torch.utils.data as data
-from torchvision.datasets.utils import download_url, check_integrity
-
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.autograd import Variable as V
-import wideresnet as wrn
+import torch.utils.data as data
 import torchvision.transforms as transforms
+from PIL import Image
+from torch.autograd import Variable as V
+from torchvision.datasets.utils import download_url, check_integrity
+
+import wideresnet as wrn
 
 
 def uniform_mix_C(mixing_ratio, num_classes):
@@ -22,7 +20,8 @@ def uniform_mix_C(mixing_ratio, num_classes):
     returns a linear interpolation of a uniform matrix and an identity matrix
     '''
     return mixing_ratio * np.full((num_classes, num_classes), 1 / num_classes) + \
-        (1 - mixing_ratio) * np.eye(num_classes)
+           (1 - mixing_ratio) * np.eye(num_classes)
+
 
 def flip_labels_C(corruption_prob, num_classes, seed=1):
     '''
@@ -35,6 +34,7 @@ def flip_labels_C(corruption_prob, num_classes, seed=1):
     for i in range(num_classes):
         C[i][np.random.choice(row_indices[row_indices != i])] = corruption_prob
     return C
+
 
 def flip_labels_C_two(corruption_prob, num_classes, seed=1):
     '''
@@ -100,23 +100,22 @@ class CIFAR10(data.Dataset):
                 self.train_data.append(entry['data'])
                 if 'labels' in entry:
                     self.train_labels += entry['labels']
-                    img_num_list = [int(self.num_meta/10)] * 10
+                    img_num_list = [int(self.num_meta / 10)] * 10
                     num_classes = 10
                 else:
                     self.train_labels += entry['fine_labels']
                     self.train_coarse_labels += entry['coarse_labels']
-                    img_num_list = [int(self.num_meta/100)] * 100
+                    img_num_list = [int(self.num_meta / 100)] * 100
                     num_classes = 100
                 fo.close()
 
             self.train_data = np.concatenate(self.train_data)
             self.train_data = self.train_data.reshape((50000, 3, 32, 32))
-            self.train_data = self.train_data.transpose((0, 2, 3, 1))   # convert to HWC
+            self.train_data = self.train_data.transpose((0, 2, 3, 1))  # convert to HWC
 
             data_list_val = {}
             for j in range(num_classes):
                 data_list_val[j] = [i for i, label in enumerate(self.train_labels) if label == j]
-
 
             idx_to_meta = []
             idx_to_train = []
@@ -127,7 +126,6 @@ class CIFAR10(data.Dataset):
                 img_num = img_num_list[int(cls_idx)]
                 idx_to_meta.extend(img_id_list[:img_num])
                 idx_to_train.extend(img_id_list[img_num:])
-
 
             if meta is True:
                 self.train_data = self.train_data[idx_to_meta]
@@ -166,7 +164,7 @@ class CIFAR10(data.Dataset):
                         tmp = np.copy(coarse_fine[i])
                         for j in range(len(tmp)):
                             tmp2 = np.delete(np.copy(tmp), j)
-                            C[tmp[j], tmp2] += corruption_prob * 1/len(tmp2)
+                            C[tmp[j], tmp2] += corruption_prob * 1 / len(tmp2)
                     self.C = C
                     print(C)
                 elif corruption_type == 'clabels':
@@ -177,7 +175,6 @@ class CIFAR10(data.Dataset):
                 else:
                     assert False, "Invalid corruption type '{}' given. Must be in {'unif', 'flip', 'hierarchical'}".format(corruption_type)
 
-                
                 if corruption_type == 'clabels':
                     mean = [x / 255 for x in [125.3, 123.0, 113.9]]
                     std = [x / 255 for x in [63.0, 62.1, 66.7]]
@@ -190,7 +187,7 @@ class CIFAR10(data.Dataset):
                     print('Starting labeling')
 
                     for i in range((len(self.train_labels) // 64) + 1):
-                        current = self.train_data[i*64:(i+1)*64]
+                        current = self.train_data[i * 64:(i + 1) * 64]
                         current = [Image.fromarray(current[i]) for i in range(len(current))]
                         current = torch.cat([test_transform(current[i]).unsqueeze(0) for i in range(len(current))], dim=0)
 
@@ -198,7 +195,6 @@ class CIFAR10(data.Dataset):
                         logits = net(data)
                         smax = F.softmax(logits / 5)  # temperature of 1
                         sampling_probs.append(smax.data.cpu().numpy())
-
 
                     sampling_probs = np.concatenate(sampling_probs, 0)
                     print('Finished labeling 1')
@@ -216,7 +212,7 @@ class CIFAR10(data.Dataset):
                     print('Finished labeling 2')
                     print('New labeling accuracy:', new_labeling_correct / len(self.train_labels))
                     print('Argmax labeling accuracy:', argmax_labeling_correct / len(self.train_labels))
-                else:    
+                else:
                     for i in range(len(self.train_labels)):
                         self.train_labels[i] = np.random.choice(num_classes, p=C[self.train_labels[i]])
                     self.corruption_matrix = C
@@ -282,7 +278,7 @@ class CIFAR10(data.Dataset):
             return
 
         root = self.root
-        download_url(self.url, root, self.filename, self.tgz_md5)
+        # download_url(self.url, root, self.filename, self.tgz_md5)
 
         # extract file
         cwd = os.getcwd()

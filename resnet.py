@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-from torch.autograd import Variable
 import torch.nn.init as init
+from torch.autograd import Variable
 
 
 def to_var(x, requires_grad=True):
@@ -194,7 +193,8 @@ def _weights_init(m):
     classname = m.__class__.__name__
     # print(classname)
     if isinstance(m, MetaLinear) or isinstance(m, MetaConv2d):
-        init.kaiming_normal(m.weight)
+        init.kaiming_normal_(m.weight)
+
 
 class LambdaLayer(MetaModule):
     def __init__(self, lambd):
@@ -222,7 +222,7 @@ class BasicBlock(MetaModule):
                 For CIFAR10 ResNet paper uses option A.
                 """
                 self.shortcut = LambdaLayer(lambda x:
-                                            F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes//4, planes//4), "constant", 0))
+                                            F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes // 4, planes // 4), "constant", 0))
             elif option == 'B':
                 self.shortcut = nn.Sequential(
                     MetaConv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
@@ -252,7 +252,7 @@ class ResNet32(MetaModule):
         self.apply(_weights_init)
 
     def _make_layer(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1]*(num_blocks-1)
+        strides = [stride] + [1] * (num_blocks - 1)
         layers = []
         for stride in strides:
             layers.append(block(self.in_planes, planes, stride))
@@ -286,11 +286,4 @@ class VNet(MetaModule):
         # x = self.linear2(x)
         # x = self.relu1(x)
         out = self.linear2(x)
-        return F.sigmoid(out)
-
-
-
-
-
-
-
+        return torch.sigmoid(out)

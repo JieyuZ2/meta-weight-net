@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-
+import higher
 import torch
+from torch import nn
 import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
+from torchvision.models import resnet34
 
 from load_corrupted_data import CIFAR10, CIFAR100
 # from wideresnet import WideResNet, VNet
-from resnet import ResNet32, VNet
+# from resnet import ResNet32, VNet
+from resnet_normal import ResNet32, VNet
 
 # import sklearn.metrics as sm
 # import pandas as pd
@@ -54,14 +57,14 @@ parser.add_argument('--resume', default='', type=str,
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--name', default='WideResNet-28-10', type=str,
                     help='name of experiment')
-parser.add_argument('--seed', type=int, default=2)
+parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--prefetch', type=int, default=0, help='Pre-fetching threads.')
 parser.set_defaults(augment=True)
 
 args = parser.parse_args()
 use_cuda = True
 torch.manual_seed(args.seed)
-device = torch.device("cuda" if use_cuda else "cpu")
+device = torch.device("cuda:0" if use_cuda else "cpu")
 
 print()
 print(args)
@@ -123,10 +126,10 @@ def build_dataset():
 
 
 def build_model():
+
     model = ResNet32(args.dataset == 'cifar10' and 10 or 100)
 
     if torch.cuda.is_available():
-        model.cuda()
         torch.backends.cudnn.benchmark = True
 
     return model
@@ -186,37 +189,42 @@ def train(train_loader, train_meta_loader, model, vnet, optimizer_model, optimiz
     train_meta_loader_iter = iter(train_meta_loader)
     for batch_idx, (inputs, targets) in enumerate(train_loader):
         model.train()
-        inputs, targets = inputs.to(device), targets.to(device)
-        meta_model = build_model().cuda()
-        meta_model.load_state_dict(model.state_dict())
-        outputs = meta_model(inputs)
-
-        cost = F.cross_entropy(outputs, targets, reduce=False)
-        cost_v = torch.reshape(cost, (len(cost), 1))
-        v_lambda = vnet(cost_v.data)
-        l_f_meta = torch.sum(cost_v * v_lambda) / len(cost_v)
-        meta_model.zero_grad()
-        grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
-        meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100)))  # For ResNet32
-        meta_model.update_params(lr_inner=meta_lr, source_params=grads)
-        del grads
-
-        try:
-            inputs_val, targets_val = next(train_meta_loader_iter)
-        except StopIteration:
-            train_meta_loader_iter = iter(train_meta_loader)
-            inputs_val, targets_val = next(train_meta_loader_iter)
-        inputs_val, targets_val = inputs_val.to(device), targets_val.to(device)
-        y_g_hat = meta_model(inputs_val)
-        l_g_meta = F.cross_entropy(y_g_hat, targets_val)
-        prec_meta = accuracy(y_g_hat.data, targets_val.data, topk=(1,))[0]
 
         optimizer_vnet.zero_grad()
-        l_g_meta.backward()
+        with higher.innerloop_ctx(model, optimizer_model, device=device) as (meta_model, diffopt):
+            inputs, targets = inputs.to(device), targets.to(device)
+
+            outputs = meta_model(inputs)
+
+            cost = F.cross_entropy(outputs, targets, reduction='none')
+            cost_v = torch.reshape(cost, (len(cost), 1))
+            v_lambda = vnet(cost_v.data)
+            l_f_meta = torch.sum(cost_v * v_lambda) / len(cost_v)
+
+            # meta_model.zero_grad()
+            # grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
+            # meta_lr = args.lr * ((0.1 ** int(epoch >= 80)) * (0.1 ** int(epoch >= 100)))  # For ResNet32
+            # meta_model.update_params(lr_inner=meta_lr, source_params=grads)
+            # del grads
+
+            diffopt.step(l_f_meta)
+
+            try:
+                inputs_val, targets_val = next(train_meta_loader_iter)
+            except StopIteration:
+                train_meta_loader_iter = iter(train_meta_loader)
+                inputs_val, targets_val = next(train_meta_loader_iter)
+            inputs_val, targets_val = inputs_val.to(device), targets_val.to(device)
+            y_g_hat = meta_model(inputs_val)
+            l_g_meta = F.cross_entropy(y_g_hat, targets_val)
+            prec_meta = accuracy(y_g_hat.data, targets_val.data, topk=(1,))[0]
+
+            l_g_meta.backward()
+
         optimizer_vnet.step()
 
         outputs = model(inputs)
-        cost_w = F.cross_entropy(outputs, targets, reduce=False)
+        cost_w = F.cross_entropy(outputs, targets, reduction='none')
         cost_v = torch.reshape(cost_w, (len(cost_w), 1))
         prec_train = accuracy(outputs.data, targets.data, topk=(1,))[0]
 
@@ -247,17 +255,22 @@ def train(train_loader, train_meta_loader, model, vnet, optimizer_model, optimiz
 
 train_loader, train_meta_loader, test_loader = build_dataset()
 # create model
-model = build_model()
-vnet = VNet(1, 100, 1).cuda()
+model = build_model().to(device)
+# model = resnet34()
+# num_ftrs = model.fc.in_features
+# model.fc = torch.nn.Linear(num_ftrs, 10)
+# model = model.to(device)
+
+vnet = VNet(1, 100, 1).to(device)
 
 if args.dataset == 'cifar10':
     num_classes = 10
 if args.dataset == 'cifar100':
     num_classes = 100
 
-optimizer_model = torch.optim.SGD(model.params(), args.lr,
+optimizer_model = torch.optim.SGD(model.parameters(), args.lr,
                                   momentum=args.momentum, weight_decay=args.weight_decay)
-optimizer_vnet = torch.optim.Adam(vnet.params(), 1e-3,
+optimizer_vnet = torch.optim.Adam(vnet.parameters(), 1e-3,
                                   weight_decay=1e-4)
 
 

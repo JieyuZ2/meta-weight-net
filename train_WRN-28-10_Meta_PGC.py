@@ -1,31 +1,22 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import os
-import shutil
-import time
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 from torch.autograd import Variable
-from torch.utils.data.sampler import SubsetRandomSampler
-import matplotlib.pyplot as plt
-import sklearn.metrics as sm
-import pandas as pd
-import sklearn.metrics as sm
-import random
-import numpy as np
 
-from wideresnet import WideResNet, VNet
-from resnet import ResNet32,VNet
 from load_corrupted_data import CIFAR10, CIFAR100
+from resnet import VNet
+from wideresnet import WideResNet, VNet
 
 parser = argparse.ArgumentParser(description='PyTorch WideResNet Training')
 parser.add_argument('--dataset', default='cifar10', type=str,
@@ -67,14 +58,15 @@ parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--prefetch', type=int, default=0, help='Pre-fetching threads.')
 parser.set_defaults(augment=True)
 
-#os.environ['CUD_DEVICE_ORDER'] = "1"
-#ids = [1]
+# os.environ['CUD_DEVICE_ORDER'] = "1"
+# ids = [1]
 
 
 best_prec1 = 0
 
-#use_cuda = True
-#device = torch.device("cuda" if use_cuda else "cpu")
+
+# use_cuda = True
+# device = torch.device("cuda" if use_cuda else "cpu")
 
 
 def main():
@@ -89,7 +81,6 @@ def main():
     optimizer_a = torch.optim.SGD(model.params(), args.lr,
                                   momentum=args.momentum, nesterov=args.nesterov,
                                   weight_decay=args.weight_decay)
-
 
     vnet = VNet(1, 100, 1).cuda()
 
@@ -127,7 +118,6 @@ def main():
         cost = F.cross_entropy(y_f_hat, target_var, reduce=False)
         cost_v = torch.reshape(cost, (len(cost), 1))
 
-
         v_lambda = vnet(cost_v.data)
 
         norm_c = torch.sum(v_lambda)
@@ -139,13 +129,11 @@ def main():
 
         l_f_meta = torch.sum(cost_v * v_lambda_norm)
         meta_model.zero_grad()
-        grads = torch.autograd.grad(l_f_meta,(meta_model.params()),create_graph=True)
+        grads = torch.autograd.grad(l_f_meta, (meta_model.params()), create_graph=True)
         meta_lr = args.lr * ((0.1 ** int(iters >= 18000)) * (0.1 ** int(iters >= 19000)))  # For WRN-28-10
-        #meta_lr = args.lr * ((0.1 ** int(iters >= 20000)) * (0.1 ** int(iters >= 25000)))  # For ResNet32
-        meta_model.update_params(lr_inner=meta_lr,source_params=grads)
+        # meta_lr = args.lr * ((0.1 ** int(iters >= 20000)) * (0.1 ** int(iters >= 25000)))  # For ResNet32
+        meta_model.update_params(lr_inner=meta_lr, source_params=grads)
         del grads
-
-
 
         input_validation, target_validation = next(iter(train_meta_loader))
         input_validation_var = to_var(input_validation, requires_grad=False)
@@ -155,17 +143,14 @@ def main():
         l_g_meta = F.cross_entropy(y_g_hat, target_validation_var)
         prec_meta = accuracy(y_g_hat.data, target_validation_var.data, topk=(1,))[0]
 
-
         optimizer_c.zero_grad()
         l_g_meta.backward()
         optimizer_c.step()
-
 
         y_f = model(input_var)
         cost_w = F.cross_entropy(y_f, target_var, reduce=False)
         cost_v = torch.reshape(cost_w, (len(cost_w), 1))
         prec_train = accuracy(y_f.data, target_var.data, topk=(1,))[0]
-
 
         with torch.no_grad():
             w_new = vnet(cost_v)
@@ -178,7 +163,6 @@ def main():
 
         l_f = torch.sum(cost_v * w_v)
 
-
         optimizer_a.zero_grad()
         l_f.backward()
         optimizer_a.step()
@@ -188,7 +172,6 @@ def main():
 
         net_l = smoothing_alpha * net_l + (1 - smoothing_alpha) * l_f.item()
         model_loss.append(net_l / (1 - smoothing_alpha ** (iters + 1)))
-
 
         if (iters + 1) % 100 == 0:
             print('Epoch: [%d/%d]\t'
@@ -203,7 +186,6 @@ def main():
             losses_test = AverageMeter()
             top1_test = AverageMeter()
             model.eval()
-
 
             for i, (input_test, target_test) in enumerate(test_loader):
                 input_test_var = to_var(input_test, requires_grad=False)
@@ -225,8 +207,8 @@ def main():
 
             best_prec1 = max(top1_test.avg, best_prec1)
 
-    #np.save('meta_model_loss_%s_%s.npy' % (args.dataset, args.label_corrupt_prob), meta_model_loss)
-    #np.save('model_loss_%s_%s.npy' % (args.dataset, args.label_corrupt_prob), model_loss)
+    # np.save('meta_model_loss_%s_%s.npy' % (args.dataset, args.label_corrupt_prob), meta_model_loss)
+    # np.save('model_loss_%s_%s.npy' % (args.dataset, args.label_corrupt_prob), model_loss)
     fig, axes = plt.subplots(1, 3, figsize=(13, 5))
     ax1, ax2, ax3 = axes.ravel()
 
@@ -238,8 +220,8 @@ def main():
 
     acc_log = np.concatenate(accuracy_log, axis=0)
     train_acc_log = np.concatenate(train_acc, axis=0)
-    #np.save('L2SPL_train_acc.npy', train_acc_log)
-    #np.save('L2SPL_val_acc.npy', acc_log)
+    # np.save('L2SPL_train_acc.npy', train_acc_log)
+    # np.save('L2SPL_val_acc.npy', acc_log)
     # lr_log = np.concatenate(lr_log, axis=0)
 
     ax2.plot(acc_log[:, 0], acc_log[:, 1])
@@ -251,7 +233,6 @@ def main():
     ax3.set_xlabel('Iteration')
 
     plt.show()
-
 
 
 def build_dataset():
@@ -299,7 +280,6 @@ def build_dataset():
             corruption_type=args.corruption_type, transform=train_transform, download=True, seed=args.seed)
         test_data = CIFAR100(root='../data', train=False, transform=test_transform, download=True)
 
-
     train_loader = torch.utils.data.DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True,
         num_workers=args.prefetch, pin_memory=True)
@@ -328,8 +308,6 @@ def build_model():
     return model
 
 
-
-
 def to_var(x, requires_grad=True):
     if torch.cuda.is_available():
         x = x.cuda()
@@ -337,9 +315,8 @@ def to_var(x, requires_grad=True):
 
 
 def adjust_learning_rate(optimizer, iters):
-
     lr = args.lr * ((0.1 ** int(iters >= 18000)) * (0.1 ** int(iters >= 19000)))  # For WRN-28-10
-    #lr = args.lr * ((0.1 ** int(iters >= 20000)) * (0.1 ** int(iters >= 25000)))  # For ResNet32
+    # lr = args.lr * ((0.1 ** int(iters >= 20000)) * (0.1 ** int(iters >= 25000)))  # For ResNet32
     # log to TensorBoard
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -378,7 +355,6 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
-
 
 
 if __name__ == '__main__':
